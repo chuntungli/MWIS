@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Mar 19 16:08:48 2019
+
+An implementation of a Maximum Weighted Independent Set Branch and Bound Algorithm:
+
+Pardalos, Panos M., and Nisha Desai. "An algorithm for finding a maximum weighted independent set in an arbitrary graph." International Journal of Computer Mathematics 38.3-4 (1991): 163-175.
+
+@author: Chun-Tung Li
+"""
+
+import numpy as np
+from functools import reduce
+
+'''
+# ========= Calculate incumb with greedy approach ========= 
+# Input: _vertexWeight (list of vertex weight)
+#        _adjacencyList (list of adjacency vertices for each vertex)
+'''
+def incumb(_vertexWeight, _adjacencyList):
+    N = len(_vertexWeight)
+    X = np.zeros(N, dtype=bool)
+    # Add all unconnected vertices
+    for i in range(N):
+        if (len(_adjacencyList[i]) == 0): # Unconnected Vertex
+            X[i] = True
+    # Calculate weight Z = w_i - W(N_i)
+    Z = np.zeros(N)
+    for i in range(N):
+        Z[i] = _vertexWeight[i] - np.sum(_vertexWeight[list(_adjacencyList[i])])
+    # Main loop of greedy algorithm
+    freeVertices = np.where(X == 0)[0]
+    while True:
+        if len(freeVertices) == 0:
+            break;
+        imin = freeVertices[np.argmax(Z[freeVertices])]
+        X[imin] = True
+        freeVertices = freeVertices[freeVertices != imin]
+        X[_adjacencyList[imin]] = False
+        freeVertices = freeVertices[~np.isin(freeVertices, _adjacencyList[imin])]
+        # Recalculate weight Z
+        for i in freeVertices:
+            Z[i] = _vertexWeight[i] - np.sum(_vertexWeight[np.intersect1d(freeVertices, _adjacencyList[i])])
+    return X
+
+'''
+# ========= Calculate Lower Bound (G) ========= 
+# Input: _vertexWeight (list of vertex weight)
+#        _adjacencyList (list of adjacency vertices for each vertex)
+'''
+def calculateLB(_X, _vertexWeight, _adjacencyList, _visitedVertices = []):
+    neighbors = np.array([], dtype=int)
+    if (len(_adjacencyList[np.where(_X == 1)[0]]) > 0):
+        neighbors = reduce(np.union1d, _adjacencyList[np.where(_X == 1)[0]])
+    if (len(_visitedVertices) > 0):
+        neighbors = np.append(neighbors, _visitedVertices[np.where(_X[_visitedVertices] == False)])
+    neighbors = np.unique(neighbors)
+    neighbors = np.array(neighbors, dtype=int)
+    wj = np.sum(_vertexWeight[neighbors])
+    return -1 * (np.sum(_vertexWeight) - wj)
+
+'''
+# ========= Branch and Bound Approach for MWIS ========= 
+# Input: _vertexWeight (list of vertex weight)
+#        _adjacencyList (list of adjacency vertices for each vertex)
+#        _OPT_X
+'''
+def BBND(_vertexWeight, _adjacencyList, _LB, _OPT_X):
+    N = len(_vertexWeight)
+    X = np.zeros(N)
+    X[:] = np.nan
+    visitedVertices = np.array([], dtype=int)
+    OPT = np.sum(_vertexWeight[_OPT_X == 1])
+    prob = {'X': [], 'visitedVertices': []}
+    sub_probs = []
+    
+#    searchSpace = 2 ** N
+#    currentProgress = 0
+#    tic = time.time()
+    while True:
+        
+        # if terminal node found (at least one neighbor is true for all w_j)
+        if (np.sum(np.isnan(X)) == 0):
+            if (np.sum(_vertexWeight[np.where(X == 1)[0]]) > OPT):
+                OPT = np.sum(_vertexWeight[np.where(X == 1)[0]])
+                _OPT_X = X
+            if (len(sub_probs) > 0):
+                prob = sub_probs.pop()
+                X = prob['X']
+                visitedVertices = prob['visitedVertices']
+            else:
+                break
+        
+        # Check for force true vertices
+        for i in range(N):
+            if (~np.any(X[list(_adjacencyList[i])])):
+                X[i] = 1
+                if (not i in visitedVertices):
+                    visitedVertices = np.append(visitedVertices,i)
+        
+        # Calculate Z(i)
+        Z = np.zeros(N)
+        for i in range(N):
+            Z[i] = _vertexWeight[i] - np.sum(_vertexWeight[list(_adjacencyList[i])])
+        if (len(visitedVertices) > 0):
+            Z[visitedVertices] = np.inf
+        # Calculate Lower Bound for G0 and G1
+        imin = np.argmin(Z)
+        
+        visitedVertices = np.append(visitedVertices, imin)
+        
+        # Calculate Lower Bound for G0
+        X[imin] = 0
+        LB0 = calculateLB(X, _vertexWeight, _adjacencyList, visitedVertices)
+        
+        # Calculate Lower Bound for G1
+        X[imin] = 1
+        LB1 = calculateLB(X, _vertexWeight, _adjacencyList, visitedVertices)
+        
+        # If G0 < G1 at least as large as current incumbent
+        if (LB0 < LB1): # 
+            # if G1 < OPT push imin = True to stack
+            if (LB1 < _LB):
+                X[imin] = 1
+                prob['X'] = X.copy()
+                prob['visitedVertices'] = visitedVertices.copy()
+                
+                prob['X'][list(_adjacencyList[imin])] = 0
+                neighbors = _adjacencyList[imin]
+                for i in neighbors:
+                    if (not i in prob['visitedVertices']):
+                        prob['visitedVertices'] = np.append(prob['visitedVertices'], i)
+                if (np.sum(np.isnan(prob['X'])) < 0):
+                    sub_probs.append(prob.copy())
+            
+            # Proceed to imin = False
+            X[imin] = 0
+        else: # G0 > G1
+            # if G0 < OPT push imin = True to stack
+            if (LB0 < _LB):
+                X[imin] = 0
+                prob['X'] = X.copy()
+                prob['visitedVertices'] = visitedVertices.copy()
+                if (np.sum(np.isnan(prob['X'])) < 0):
+                    sub_probs.append(prob.copy())
+            # Proceed to imin = True
+            X[imin] = 1
+            X[list(_adjacencyList[imin])] = 0
+            neighbors = _adjacencyList[imin]
+            for i in neighbors:
+                if (not i in visitedVertices):
+                    visitedVertices = np.append(visitedVertices, i)
+        print('\rVisited Vertices:' + str(len(visitedVertices)) + ' Number of subproblems:' + str(len(sub_probs)) + ' LB:' + str(_LB) + ' LB0:' + str(LB0) + ' LB1:' + str(LB1), end="")
+    return _OPT_X
+
+def MWIS(vertexWeight, adjacencyList):
+    X = incumb(vertexWeight, adjacencyList)
+    LB = calculateLB(X, vertexWeight, adjacencyList)
+    return BBND(vertexWeight, adjacencyList, LB, X)
